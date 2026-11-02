@@ -1,0 +1,312 @@
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moja strona - Arduino Bluetooth</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f2f5fa;
+  color: #243047;
+}
+
+header {
+  background: white;
+  padding: 25px;
+  text-align: center;
+  border-bottom: 1px solid #ddd;
+}
+
+header h1 {
+  margin: 0;
+  color: #1769e0;
+}
+
+main {
+  max-width: 500px;
+  margin: 35px auto;
+  padding: 15px;
+}
+
+.panel {
+  background: white;
+  padding: 25px;
+  border-radius: 18px;
+  box-shadow: 0 5px 20px #00000010;
+  text-align: center;
+}
+
+.status {
+  background: #edf1f7;
+  padding: 13px;
+  border-radius: 10px;
+  margin: 18px 0;
+}
+
+button {
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button:active {
+  transform: scale(.96);
+}
+
+.connect {
+  width: 100%;
+  padding: 17px;
+  background: #1769e0;
+  color: white;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.direction, .stop {
+  min-height: 75px;
+}
+
+.direction {
+  background: #e5efff;
+  color: #1455a5;
+}
+
+.stop {
+  background: #e53935;
+  color: white;
+}
+
+.empty {
+  visibility: hidden;
+}
+
+.info {
+  color: #718096;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 22px;
+}
+
+footer {
+  text-align: center;
+  color: #8490a0;
+  padding: 25px;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>MOJA STRONA</h1>
+  <p>Sterowanie Arduino przez Bluetooth</p>
+</header>
+
+<main>
+<section class="panel">
+
+  <h2>Sterowanie pojazdem</h2>
+
+  <button class="connect" id="connect">
+    POŁĄCZ BLUETOOTH
+  </button>
+
+  <div class="status" id="status">
+    Status: niepołączono
+  </div>
+
+  <div class="buttons">
+
+    <div class="empty"></div>
+    <button class="direction" data-command="F">
+      ▲<br>PRZÓD
+    </button>
+    <div class="empty"></div>
+
+    <button class="direction" data-command="L">
+      ◀<br>LEWO
+    </button>
+
+    <button class="stop" id="stop">
+      STOP
+    </button>
+
+    <button class="direction" data-command="R">
+      ▶<br>PRAWO
+    </button>
+
+    <div class="empty"></div>
+    <button class="direction" data-command="B">
+      ▼<br>TYŁ
+    </button>
+    <div class="empty"></div>
+
+  </div>
+
+  <p class="info">
+    Przytrzymaj przycisk, aby jechać.
+    Po puszczeniu pojazd się zatrzyma.
+    Testuj najpierw z uniesionymi kołami.
+  </p>
+
+</section>
+</main>
+
+<footer>
+  Moja strona © 2026
+</footer>
+
+<script>
+
+const SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb";
+const CHARACTERISTIC = "0000ffe1-0000-1000-8000-00805f9b34fb";
+
+let device = null;
+let tx = null;
+let activeCommand = null;
+let timer = null;
+let lastSend = Promise.resolve();
+
+const statusBox = document.getElementById("status");
+
+function status(text) {
+  statusBox.textContent = "Status: " + text;
+}
+
+function send(command) {
+  if (!tx || !device?.gatt?.connected) return;
+
+  lastSend = lastSend.then(async () => {
+    if (!tx || !device?.gatt?.connected) return;
+
+    await tx.writeValue(
+      new TextEncoder().encode(command)
+    );
+  }).catch(error => {
+    console.error(error);
+    status("błąd wysyłania");
+  });
+
+  return lastSend;
+}
+
+async function connectBluetooth() {
+  if (!navigator.bluetooth) {
+    status("użyj Chrome lub Edge z obsługą BLE");
+    return;
+  }
+
+  try {
+    status("szukanie modułu...");
+
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [SERVICE]
+    });
+
+    device.addEventListener("gattserverdisconnected", () => {
+      stop();
+      tx = null;
+      status("rozłączono");
+    });
+
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+
+    tx = await service.getCharacteristic(CHARACTERISTIC);
+
+    status("połączono: " + (device.name || "Bluetooth"));
+    await send("S");
+
+  } catch (error) {
+    console.error(error);
+    status("nie udało się połączyć");
+  }
+}
+
+function start(command) {
+  if (!tx || !device?.gatt?.connected) {
+    status("najpierw połącz Bluetooth");
+    return;
+  }
+
+  if (activeCommand === command) return;
+
+  stop();
+  activeCommand = command;
+
+  send(command);
+
+  timer = setInterval(() => {
+    if (activeCommand === command) {
+      send(command);
+    }
+  }, 200);
+}
+
+function stop() {
+  const wasMoving = activeCommand !== null;
+
+  activeCommand = null;
+
+  if (timer !== null) {
+    clearInterval(timer);
+    timer = null;
+  }
+
+  if (wasMoving) send("S");
+}
+
+document.getElementById("connect")
+  .addEventListener("click", connectBluetooth);
+
+document.getElementById("stop")
+  .addEventListener("pointerdown", event => {
+    event.preventDefault();
+    stop();
+  });
+
+document.querySelectorAll("[data-command]").forEach(button => {
+
+  const command = button.dataset.command;
+
+  button.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    start(command);
+  });
+
+  button.addEventListener("pointerup", stop);
+  button.addEventListener("pointercancel", stop);
+  button.addEventListener("lostpointercapture", stop);
+
+});
+
+window.addEventListener("blur", stop);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stop();
+});
+
+</script>
+</body>
+</html>
